@@ -1,0 +1,7 @@
+osmnx==1.9.3
+geopandas>=0.14,<0.15
+shapely==2.0.4
+pyproj>=3.6,<3.7
+scikit-image>=0.22,<0.23
+numpy>=1.26,<2.0
+matplotlib>=3.8,<3.9
