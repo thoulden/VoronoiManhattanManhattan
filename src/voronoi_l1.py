@@ -40,7 +40,7 @@ def main():
     ap.add_argument("--query", default="railway=station")
     ap.add_argument("--grid-res", type=float, default=20.0, help="meters between grid samples")
     ap.add_argument("--figsize", type=parse_figsize, default=(24.0, 36.0), help='WxH inches, e.g. "24x36"')
-    ap.add_argument("--max-sites", type=int, default=1500, help="cap sites for speed (0 = no cap)")
+    ap.add_argument("--max_sites", type=int, default=1500, help="cap sites for speed (0 = no cap)")
     ap.add_argument("--out", default="out/manhattan_voronoi_L1.svg")
     ap.add_argument("--draw-sites", action="store_true")
     ap.add_argument("--bg", default="#f8f7f2")
@@ -70,9 +70,9 @@ def main():
     pts = pts[pts.within(city_poly)]
     pts = pts.drop_duplicates(subset=["geometry"])
 
-    if args.max-sites and len(pts) > args.max-sites:
-        print(f"Thinning sites: {len(pts)} → {args.max-sites}")
-        pts = pts.sample(args.max-sites, random_state=42)
+    if if args.max_sites and len(pts) > args.max_sites::
+        print(f"Thinning sites: {len(pts)} → {args.max_sites}")
+        pts = pts.sample(args.max_sites, random_state=42)
 
     if len(pts) < 3:
         raise SystemExit("Need at least 3 sites. Try a different query or city.")
