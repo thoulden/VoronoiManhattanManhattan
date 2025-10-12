@@ -1,0 +1,81 @@
+name: build-and-deploy
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python deps
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build SVG
+        run: |
+          source .venv/bin/activate
+          mkdir -p out
+          python src/voronoi_l1.py \
+            --city "Manhattan, New York, USA" \
+            --query "railway=station" \
+            --grid-res 20 \
+            --figsize "24x36" \
+            --out "out/manhattan_voronoi_L1.svg"
+
+      - name: Create simple site
+        run: |
+          mkdir -p site
+          cat > site/index.html << 'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>Manhattan Voronoi (L1)</title>
+          <style>
+            body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 2rem; }
+            .wrap { max-width: 1200px; margin: 0 auto; }
+            .card { padding: 1rem; border: 1px solid #ddd; border-radius: 12px; }
+            img { width: 100%; height: auto; border: 1px solid #eee; }
+            a.btn { display: inline-block; margin-top: 1rem; padding: .6rem 1rem; border: 1px solid #111; border-radius: 8px; text-decoration: none; color: #111; }
+          </style>
+          <div class="wrap">
+            <h1>Manhattan Voronoi (L1)</h1>
+            <p>Generated from OpenStreetMap data via GitHub Actions. Download the SVG to print.</p>
+            <div class="card">
+              <p><a class="btn" href="./manhattan_voronoi_L1.svg" download>Download SVG</a></p>
+              <img src="./manhattan_voronoi_L1.svg" alt="Voronoi Poster Preview">
+            </div>
+            <p style="margin-top:1rem;color:#666">Data: OpenStreetMap · Metric: L₁ (Manhattan) · Built on CI</p>
+          </div>
+          HTML
+          cp out/manhattan_voronoi_L1.svg site/
+
+      - name: Upload artifact for Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
