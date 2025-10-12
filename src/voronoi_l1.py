@@ -58,7 +58,6 @@ def main():
     # 2) Sites from OSM
     kv = parse_kv(args.query)
     print(f"[2/5] Fetching OSM features with {kv} …")
-    # osmnx expects WGS84 for query polygon
     city_poly_wgs84 = gpd.GeoSeries([city_poly], crs=3857).to_crs(4326).iloc[0]
     feats = ox.features_from_polygon(city_poly_wgs84, kv)
 
@@ -70,7 +69,8 @@ def main():
     pts = pts[pts.within(city_poly)]
     pts = pts.drop_duplicates(subset=["geometry"])
 
-    if if args.max_sites and len(pts) > args.max_sites::
+    # ✅ Fixed thinning block
+    if args.max_sites and len(pts) > args.max_sites:
         print(f"Thinning sites: {len(pts)} → {args.max_sites}")
         pts = pts.sample(args.max_sites, random_state=42)
 
@@ -80,10 +80,10 @@ def main():
     print(f"Using {len(pts)} sites.")
 
     # 3) Grid (meters)
-    print(f"[3/5] Building grid at ~{args.grid-res} m …")
+    print(f"[3/5] Building grid at ~{args.grid_res} m …")
     minx, miny, maxx, maxy = city_poly.bounds
-    xs = np.arange(minx, maxx, args.grid-res)
-    ys = np.arange(miny, maxy, args.grid-res)
+    xs = np.arange(minx, maxx, args.grid_res)
+    ys = np.arange(miny, maxy, args.grid_res)
     X, Y = np.meshgrid(xs, ys)
     grid_pts = np.c_[X.ravel(), Y.ravel()]
 
@@ -124,7 +124,7 @@ def main():
         yw = ys[0] + (yy / (len(ys)-1)) * (ys[-1] - ys[0])
         ax.plot(xw, yw, linewidth=args.linewidth, color=args.stroke, solid_joinstyle="miter")
 
-    if args.draw-sites:
+    if args.draw_sites:
         ax.scatter(S[:,0], S[:,1], s=2, color=args.stroke, alpha=0.5)
 
     ax.set_xlim(minx, maxx)
