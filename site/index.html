@@ -1,0 +1,61 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Voronoi Manhattan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; }
+  .wrap { max-width: 1200px; margin: 0 auto; }
+  select, button { font-size: 16px; padding: 8px 10px; margin-right: 8px; }
+  img { width: 100%; height: auto; border: 1px solid #e5e5e5; margin-top: 16px; }
+  .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom: 12px; }
+  small { color:#666; }
+</style>
+<div class="wrap">
+  <h1>Voronoi Manhattan</h1>
+  <div class="bar">
+    <label>Points:</label>
+    <select id="query">
+      <option value="railway_station">Subway/Rail stations</option>
+      <option value="amenity_cafe">Cafés</option>
+      <option value="shop_bagel">Bagel shops</option>
+      <option value="tourism_museum">Museums</option>
+      <option value="amenity_library">Libraries</option>
+    </select>
+
+    <label>Metric:</label>
+    <select id="metric">
+      <option value="l1">Manhattan (L1)</option>
+      <option value="l2">Euclidean (L2)</option>
+    </select>
+
+    <button id="load">Load</button>
+    <a id="download" class="btn" href="#" download>Download SVG</a>
+  </div>
+
+  <small>Built from OpenStreetMap data. Pick a dataset and metric to view a pre-built poster.</small>
+  <img id="poster" alt="Poster" src="" />
+</div>
+
+<script>
+  const poster = document.getElementById('poster');
+  const dl = document.getElementById('download');
+  const q = document.getElementById('query');
+  const m = document.getElementById('metric');
+  const btn = document.getElementById('load');
+
+  function urlFor(metric, queryKey) {
+    // matches filenames produced by the workflow below
+    return `./manhattan_${metric}_${queryKey}.svg`;
+  }
+
+  function load() {
+    const u = urlFor(m.value, q.value);
+    poster.src = u;
+    dl.href = u;
+    dl.textContent = 'Download SVG';
+  }
+
+  btn.addEventListener('click', load);
+  // default load
+  load();
+</script>
