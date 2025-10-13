@@ -1,0 +1,73 @@
+name: build-and-deploy
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        metric: [l1, l2]
+        query:
+          - railway=station
+          - amenity=cafe
+          - shop=bagel
+          - tourism=museum
+          - amenity=library
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python deps
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build one SVG
+        run: |
+          source .venv/bin/activate
+          mkdir -p site
+          # slug for the filename that site/index.html expects
+          SLUG=$(echo "${{ matrix.query }}" | sed 's/[=]/_/g')
+          OUT="site/manhattan_${{ matrix.metric }}_${SLUG}.svg"
+          python src/voronoi_l1.py \
+            --city "Manhattan, New York, USA" \
+            --query "${{ matrix.query }}" \
+            --metric "${{ matrix.metric }}" \
+            --grid-res 20 \
+            --figsize "24x36" \
+            --out "$OUT"
+
+      - name: Copy website shell
+        run: |
+          # only needs to be written once; safe to overwrite each job
+          cp -r site/index.html site/index.html || true
+
+      - name: Upload artifact for Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
