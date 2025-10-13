@@ -33,7 +33,7 @@ jobs:
           mkdir -p out
           python src/voronoi_l1.py \
             --city "Manhattan, New York, USA" \
-            --query "railway=cafe" \
+            --query "amenity=cafe" \
             --grid-res 20 \
             --figsize "24x36" \
             --out "out/manhattan_voronoi_L1.svg"
