@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, os, re
+import argparse, os, re, sys
 import numpy as np
 import geopandas as gpd
 import osmnx as ox
@@ -10,33 +10,25 @@ import matplotlib.pyplot as plt
 
 def parse_figsize(s: str):
     m = re.match(r"^\s*(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)\s*$", s)
-    if not m:
-        raise argparse.ArgumentTypeError("figsize must be like '24x36'")
+    if not m: raise argparse.ArgumentTypeError("figsize must be like '24x36'")
     return float(m.group(1)), float(m.group(2))
 
 def parse_kv(query: str):
-    if "=" not in query:
-        raise argparse.ArgumentTypeError("query must be key=value, e.g. railway=station")
-    k, v = query.split("=", 1)
-    return {k.strip(): v.strip()}
+    if "=" not in query: raise argparse.ArgumentTypeError("query must be key=value")
+    k, v = query.split("=", 1); return {k.strip(): v.strip()}
 
 def polygons_list(geom):
     if isinstance(geom, Polygon): return [geom]
     if isinstance(geom, MultiPolygon): return list(geom.geoms)
-    u = unary_union(geom)
-    return list(u.geoms) if isinstance(u, MultiPolygon) else [u]
+    u = unary_union(geom); return list(u.geoms) if isinstance(u, MultiPolygon) else [u]
 
-def nearest_labels(points_xy: np.ndarray, sites_xy: np.ndarray, metric: str, chunk: int = 50000) -> np.ndarray:
-    """Vectorized nearest-site under L1 or L2."""
+def nearest_labels(points_xy, sites_xy, metric: str, chunk=50000):
     labels = np.empty(points_xy.shape[0], dtype=np.int32)
     for i in range(0, points_xy.shape[0], chunk):
-        P = points_xy[i:i+chunk][:, None, :]          # (chunk, 1, 2)
-        S = sites_xy[None, :, :]                      # (1, n, 2)
+        P = points_xy[i:i+chunk][:, None, :]
+        S = sites_xy[None, :, :]
         D = P - S
-        if metric == "l1":
-            d = np.abs(D).sum(axis=2)                 # |dx|+|dy|
-        else:  # l2
-            d = np.sqrt((D**2).sum(axis=2))           # sqrt(dx^2+dy^2)
+        d = (np.abs(D).sum(axis=2) if metric=="l1" else np.sqrt((D**2).sum(axis=2)))
         labels[i:i+chunk] = d.argmin(axis=1)
     return labels
 
@@ -45,9 +37,9 @@ def main():
     ap.add_argument("--city", default="Manhattan, New York, USA")
     ap.add_argument("--query", default="railway=station")
     ap.add_argument("--metric", choices=["l1","l2"], default="l1")
-    ap.add_argument("--grid-res", type=float, default=20.0, help="meters between grid samples")
-    ap.add_argument("--figsize", type=parse_figsize, default=(24.0, 36.0), help='WxH inches, e.g. "24x36"')
-    ap.add_argument("--max_sites", type=int, default=1500, help="cap sites for speed (0 = no cap)")
+    ap.add_argument("--grid-res", type=float, default=20.0)
+    ap.add_argument("--figsize", type=parse_figsize, default=(24.0, 36.0))
+    ap.add_argument("--max_sites", type=int, default=1500)
     ap.add_argument("--out", default="out/poster.svg")
     ap.add_argument("--draw-sites", action="store_true")
     ap.add_argument("--bg", default="#f8f7f2")
@@ -63,21 +55,31 @@ def main():
 
     kv = parse_kv(args.query)
     print(f"[2/5] Fetching OSM features with {kv} …")
+    # Overpass expects WGS84 polygon, but we will reproject the *results* immediately.
     city_poly_wgs84 = gpd.GeoSeries([city_poly], crs=3857).to_crs(4326).iloc[0]
-    feats = ox.features_from_polygon(city_poly_wgs84, kv)
+    try:
+        feats = ox.features_from_polygon(city_poly_wgs84, kv)
+    except Exception as e:
+        print(f"[skip] Overpass returned no data for {kv}: {e}")
+        return
 
-    geom = feats.geometry
+    # ✅ Reproject first, THEN take centroids for non-point geometries
+    feats_3857 = feats.to_crs(3857)
+    geom = feats_3857.geometry
     if geom.geom_type.isin(["Polygon","MultiPolygon","LineString","MultiLineString"]).any():
-        geom = geom.centroid  # warning about CRS is fine; we reproject right away
-    pts = gpd.GeoDataFrame(geometry=geom, crs=feats.crs).to_crs(3857).dropna()
+        geom = geom.centroid
+    pts = gpd.GeoDataFrame(geometry=geom, crs=3857).dropna()
     pts = pts[pts.within(city_poly)].drop_duplicates(subset=["geometry"])
 
     if args.max_sites and len(pts) > args.max_sites:
         print(f"Thinning sites: {len(pts)} → {args.max_sites}")
         pts = pts.sample(args.max_sites, random_state=42)
+
     if len(pts) < 3:
-        print(f"[skip] Only {len(pts)} site(s) for {args.query}; not generating {args.out}")
-    return
+        print(f"[skip] Only {len(pts)} site(s) for {kv}; not generating {args.out}")
+        return
+
+    print(f"Using {len(pts)} sites.")
 
     print(f"[3/5] Building grid at ~{args.grid_res} m …")
     minx, miny, maxx, maxy = city_poly.bounds
@@ -88,7 +90,7 @@ def main():
 
     print(f"[4/5] Assigning nearest site ({args.metric.upper()})…")
     S = np.c_[pts.geometry.x.values, pts.geometry.y.values]
-    labels = nearest_labels(grid_pts, S, args.metric, chunk=50000)
+    labels = nearest_labels(grid_pts, S, args.metric)
     label_grid = labels.reshape(Y.shape)
 
     centers = gpd.GeoSeries(gpd.points_from_xy(grid_pts[:,0], grid_pts[:,1]), crs=3857)
@@ -105,9 +107,15 @@ def main():
     fig = plt.figure(figsize=args.figsize, dpi=300); ax = plt.gca()
     ax.set_aspect("equal"); ax.set_facecolor(args.bg)
 
-    for poly in polygons_list(city_poly):
-        bx, by = poly.exterior.xy
-        ax.plot(bx, by, linewidth=args.linewidth*1.4, color=args.stroke)
+    def draw_outline(g):
+        if isinstance(g, Polygon): gs = [g]
+        elif isinstance(g, MultiPolygon): gs = list(g.geoms)
+        else: gs = polygons_list(g)
+        for poly in gs:
+            bx, by = poly.exterior.xy
+            ax.plot(bx, by, linewidth=args.linewidth*1.4, color=args.stroke)
+
+    draw_outline(city_poly)
 
     for c in contours:
         yy, xx = c[:,0], c[:,1]
