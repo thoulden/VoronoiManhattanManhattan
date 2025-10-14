@@ -12,15 +12,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        metric: [l1, l2]
-        query:
-          - railway=station
-          - amenity=cafe
-          - shop=bagel
-          - tourism=museum
-          - amenity=library
     steps:
       - uses: actions/checkout@v4
 
@@ -36,25 +27,45 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Build one SVG
+      - name: Build all posters
         run: |
+          set -e
           source .venv/bin/activate
           mkdir -p site
-          # slug for the filename that site/index.html expects
-          SLUG=$(echo "${{ matrix.query }}" | sed 's/[=]/_/g')
-          OUT="site/manhattan_${{ matrix.metric }}_${SLUG}.svg"
-          python src/voronoi_l1.py \
-            --city "Manhattan, New York, USA" \
-            --query "${{ matrix.query }}" \
-            --metric "${{ matrix.metric }}" \
-            --grid-res 20 \
-            --figsize "24x36" \
-            --out "$OUT"
 
-      - name: Copy website shell
-        run: |
-          # only needs to be written once; safe to overwrite each job
-          cp -r site/index.html site/index.html || true
+          # Copy your dropdown website
+          cp site/index.html site/index.html 2>/dev/null || true
+
+          QUERIES=("railway=station" "amenity=cafe" "tourism=museum" "amenity=library" "shop=bagel")
+          METRICS=("l1" "l2")
+
+          for q in "${QUERIES[@]}"; do
+            # slug: key=value -> key_value
+            SLUG=$(echo "$q" | sed 's/[=]/_/')
+            for metric in "${METRICS[@]}"; do
+              OUT="site/manhattan_${metric}_${SLUG}.svg"
+              echo "=== Building $OUT (query='$q' metric=$metric) ==="
+
+              # Try up to 3 times (Overpass can be flaky)
+              n=0
+              until [ $n -ge 3 ]
+              do
+                python src/voronoi_l1.py \
+                  --city "Manhattan, New York, USA" \
+                  --query "$q" \
+                  --metric "$metric" \
+                  --grid-res 20 \
+                  --figsize "24x36" \
+                  --out "$OUT" && break
+                n=$((n+1))
+                echo "retry $n/3 after wait…" && sleep 10
+              done
+
+              if [ ! -f "$OUT" ]; then
+                echo "[skip] Did not produce $OUT (likely too few sites or transient fetch). Continuing."
+              fi
+            done
+          done
 
       - name: Upload artifact for Pages
         uses: actions/upload-pages-artifact@v3
