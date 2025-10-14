@@ -76,8 +76,8 @@ def main():
         print(f"Thinning sites: {len(pts)} → {args.max_sites}")
         pts = pts.sample(args.max_sites, random_state=42)
     if len(pts) < 3:
-        raise SystemExit("Need at least 3 sites. Try a different query or city.")
-    print(f"Using {len(pts)} sites.")
+        print(f"[skip] Only {len(pts)} site(s) for {args.query}; not generating {args.out}")
+    return
 
     print(f"[3/5] Building grid at ~{args.grid_res} m …")
     minx, miny, maxx, maxy = city_poly.bounds
