@@ -8,9 +8,10 @@ from shapely.ops import unary_union
 from skimage import measure
 import matplotlib.pyplot as plt
 
+# Keep Overpass polite but avoid hanging forever
 ox.settings.overpass_rate_limit = True
-ox.settings.overpass_timeout = 180      # seconds for the Overpass server
-ox.settings.requests_timeout = 180      # seconds for HTTP requests
+ox.settings.overpass_timeout = 180
+ox.settings.requests_timeout = 180
 
 def parse_figsize(s: str):
     m = re.match(r"^\s*(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)\s*$", s)
@@ -42,7 +43,6 @@ def nearest_labels(points_xy, sites_xy, metric: str, chunk=50000):
     return labels
 
 def rotate_clockwise(xy: np.ndarray, deg: float) -> np.ndarray:
-    """Rotate (x,y) by +deg degrees clockwise."""
     t = np.deg2rad(deg)
     c, s = np.cos(t), np.sin(t)
     R = np.array([[c, s], [-s, c]])
@@ -50,7 +50,7 @@ def rotate_clockwise(xy: np.ndarray, deg: float) -> np.ndarray:
 
 def main():
     ap = argparse.ArgumentParser(description="Generate Voronoi poster (L1 or L2) as SVG")
-    ap.add_argument("--city", default="Manhattan, New York, USA")
+    ap.add_argument("--city", default="New York County, New York, USA")
     ap.add_argument("--query", default="railway=station")
     ap.add_argument("--metric", choices=["l1", "l2"], default="l1")
     ap.add_argument("--grid-res", type=float, default=20.0)
@@ -61,33 +61,27 @@ def main():
     ap.add_argument("--bg", default="#f8f7f2")
     ap.add_argument("--stroke", default="#111111")
     ap.add_argument("--linewidth", type=float, default=0.6)
-    ap.add_argument("--l1-rotate-deg", type=float, default=0.0,
-                    help="Rotate axes clockwise (degrees) before L1 distance; ~29 for Manhattan")
+    ap.add_argument("--l1-rotate-deg", type=float, default=29.0,
+                    help="Rotate axes clockwise before L1 (≈29 for Manhattan)")
     args = ap.parse_args()
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
 
-    # 1) Boundary (prefer detailed admin relation)
+    # 1) Boundary (fast, compact place polygon)
     print(f"[1/5] Getting boundary for: {args.city}")
-    try:
-        admin = ox.features_from_place(args.city, {"boundary": "administrative"}).to_crs(3857)
-        geom = admin.geometry.unary_union
-        city_poly = geom if geom.geom_type != "MultiPolygon" else max(geom.geoms, key=lambda g: g.area)
-    except Exception:
-        boundary = ox.geocode_to_gdf(args.city)[["geometry"]].to_crs(3857)
-        city_poly = boundary.iloc[0].geometry
+    boundary = ox.geocode_to_gdf(args.city)[["geometry"]].to_crs(3857)
+    city_poly = boundary.iloc[0].geometry
 
-    # 2) Sites from OSM
+    # 2) Sites from OSM — query by place (avoids huge geometry subdivision)
     kv = parse_kv(args.query)
-    print(f"[2/5] Fetching OSM features with {kv} …")
-    city_poly_wgs84 = gpd.GeoSeries([city_poly], crs=3857).to_crs(4326).iloc[0]
+    print(f"[2/5] Fetching OSM features for {kv} in {args.city} …")
     try:
-        feats = ox.features_from_polygon(city_poly_wgs84, kv)
+        feats = ox.features_from_place(args.city, kv)  # ← key change
     except Exception as e:
         print(f"[skip] Overpass returned no data for {kv}: {e}")
         return
 
-    # Reproject first, THEN centroid for non-point geometries
+    # Reproject to meters first, then centroid for non-point features
     feats_3857 = feats.to_crs(3857)
     geom = feats_3857.geometry
     if geom.geom_type.isin(["Polygon", "MultiPolygon", "LineString", "MultiLineString"]).any():
@@ -113,7 +107,7 @@ def main():
     X, Y = np.meshgrid(xs, ys)
     grid_pts = np.c_[X.ravel(), Y.ravel()]
 
-    # 4) Distance labels (with optional L1 rotation)
+    # 4) Distance labels (rotate axes for L1 if requested)
     print(f"[4/5] Assigning nearest site ({args.metric.upper()})…")
     S = np.c_[pts.geometry.x.values, pts.geometry.y.values]
     P = grid_pts
@@ -129,7 +123,7 @@ def main():
     label_grid = np.where(inside, label_grid, -1)
 
     # 5) Extract boundaries and plot
-    print("[5/5] Extracting vector contours and rendering …")
+    print("[5/5] Extracting contours and rendering …")
     edges = np.zeros_like(label_grid, dtype=np.uint8)
     edges[:-1, :] |= (label_grid[:-1, :] != label_grid[1:, :]).astype(np.uint8)
     edges[:, :-1] |= (label_grid[:, :-1] != label_grid[:, 1:]).astype(np.uint8)
