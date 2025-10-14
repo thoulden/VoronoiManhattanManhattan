@@ -8,6 +8,10 @@ from shapely.ops import unary_union
 from skimage import measure
 import matplotlib.pyplot as plt
 
+ox.settings.overpass_rate_limit = True
+ox.settings.overpass_timeout = 180      # seconds for the Overpass server
+ox.settings.requests_timeout = 180      # seconds for HTTP requests
+
 def parse_figsize(s: str):
     m = re.match(r"^\s*(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)\s*$", s)
     if not m:
