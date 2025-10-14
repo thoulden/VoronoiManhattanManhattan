@@ -1,8 +1,9 @@
 name: build-and-deploy
+
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch: {}
+    branches: ["main"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,7 +14,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -21,23 +23,25 @@ jobs:
           python-version: "3.11"
 
       - name: Install Python deps
+        shell: bash
         run: |
           python -m venv .venv
           source .venv/bin/activate
           pip install --upgrade pip
           pip install -r requirements.txt
 
-       - name: Build all posters
+      - name: Build all posters
+        shell: bash
         run: |
-          # Don't fail-fast; we want to try all combos even if one is slow
+          # try all combos even if one is slow
           source .venv/bin/activate
           mkdir -p site
-          cp site/index.html site/index.html 2>/dev/null || true
+          [ -f site/index.html ] && cp site/index.html site/index.html || true
 
           QUERIES=("railway=station" "amenity=cafe" "tourism=museum" "amenity=library" "shop=bakery")
           METRICS=("l1" "l2")
           L1_ROTATE=29
-          CITY="New York County, New York, USA"   # ✅ compact, accurate Manhattan polygon
+          CITY="New York County, New York, USA"
 
           for q in "${QUERIES[@]}"; do
             SLUG=$(echo "$q" | sed 's/[^A-Za-z0-9=]/_/g; s/=/_/')
@@ -48,7 +52,6 @@ jobs:
               ROT=""
               if [ "$metric" = "l1" ]; then ROT="--l1-rotate-deg $L1_ROTATE"; fi
 
-              # Retry a few times; bail on this combo after 3 attempts, continue others
               n=0
               until [ $n -ge 3 ]; do
                 python src/voronoi_l1.py \
@@ -70,7 +73,7 @@ jobs:
           done
 
           echo "Files in site/:"
-          ls -lh site
+          ls -lh site || true
 
       - name: Upload artifact for Pages
         uses: actions/upload-pages-artifact@v3
