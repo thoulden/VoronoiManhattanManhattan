@@ -27,40 +27,32 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Build all posters
+       - name: Build all posters
         run: |
-          # Don't fail-fast; we want to try all combos even if one fails
+          # Don't fail-fast; we want to try all combos even if one is slow
           source .venv/bin/activate
           mkdir -p site
-
-          # Keep your website shell
           cp site/index.html site/index.html 2>/dev/null || true
 
-          # ✅ Queries to prebuild (feel free to tweak)
           QUERIES=("railway=station" "amenity=cafe" "tourism=museum" "amenity=library" "shop=bakery")
-          # ^ tip: 'shop=bagel' is very sparse on OSM; 'shop=bakery' yields nicer coverage
-
           METRICS=("l1" "l2")
-
-          # Rotate L1 axes ~29° clockwise to match Manhattan's street grid
           L1_ROTATE=29
+          CITY="New York County, New York, USA"   # ✅ compact, accurate Manhattan polygon
 
           for q in "${QUERIES[@]}"; do
-            # slug: sanitize 'key=value' -> 'key_value' (and strip weird chars)
             SLUG=$(echo "$q" | sed 's/[^A-Za-z0-9=]/_/g; s/=/_/')
             for metric in "${METRICS[@]}"; do
               OUT="site/manhattan_${metric}_${SLUG}.svg"
               echo "=== Building $OUT (query='$q' metric=$metric) ==="
 
-              # Add rotation flag only for L1
               ROT=""
               if [ "$metric" = "l1" ]; then ROT="--l1-rotate-deg $L1_ROTATE"; fi
 
-              # Try up to 3 times (Overpass can be flaky)
+              # Retry a few times; bail on this combo after 3 attempts, continue others
               n=0
               until [ $n -ge 3 ]; do
                 python src/voronoi_l1.py \
-                  --city "New York County, New York, USA" \
+                  --city "$CITY" \
                   --query "$q" \
                   --metric "$metric" \
                   $ROT \
@@ -68,11 +60,11 @@ jobs:
                   --figsize "24x36" \
                   --out "$OUT" && break
                 n=$((n+1))
-                echo "retry $n/3 after wait…" && sleep 10
+                echo "retry $n/3 after wait…"; sleep 10
               done
 
               if [ ! -f "$OUT" ]; then
-                echo "[skip] Did not produce $OUT (too few sites or transient fetch). Continuing."
+                echo "[skip] Did not produce $OUT (too few sites or slow Overpass). Continuing."
               fi
             done
           done
