@@ -29,31 +29,41 @@ jobs:
 
       - name: Build all posters
         run: |
-          set -e
+          # Don't fail-fast; we want to try all combos even if one fails
           source .venv/bin/activate
           mkdir -p site
 
-          # Copy your dropdown website
+          # Keep your website shell
           cp site/index.html site/index.html 2>/dev/null || true
 
-          QUERIES=("railway=station" "amenity=cafe" "tourism=museum" "amenity=library" "shop=bagel")
+          # ✅ Queries to prebuild (feel free to tweak)
+          QUERIES=("railway=station" "amenity=cafe" "tourism=museum" "amenity=library" "shop=bakery")
+          # ^ tip: 'shop=bagel' is very sparse on OSM; 'shop=bakery' yields nicer coverage
+
           METRICS=("l1" "l2")
 
+          # Rotate L1 axes ~29° clockwise to match Manhattan's street grid
+          L1_ROTATE=29
+
           for q in "${QUERIES[@]}"; do
-            # slug: key=value -> key_value
-            SLUG=$(echo "$q" | sed 's/[=]/_/')
+            # slug: sanitize 'key=value' -> 'key_value' (and strip weird chars)
+            SLUG=$(echo "$q" | sed 's/[^A-Za-z0-9=]/_/g; s/=/_/')
             for metric in "${METRICS[@]}"; do
               OUT="site/manhattan_${metric}_${SLUG}.svg"
               echo "=== Building $OUT (query='$q' metric=$metric) ==="
 
+              # Add rotation flag only for L1
+              ROT=""
+              if [ "$metric" = "l1" ]; then ROT="--l1-rotate-deg $L1_ROTATE"; fi
+
               # Try up to 3 times (Overpass can be flaky)
               n=0
-              until [ $n -ge 3 ]
-              do
+              until [ $n -ge 3 ]; do
                 python src/voronoi_l1.py \
-                  --city "Manhattan, New York, USA" \
+                  --city "New York County, New York, USA" \
                   --query "$q" \
                   --metric "$metric" \
+                  $ROT \
                   --grid-res 20 \
                   --figsize "24x36" \
                   --out "$OUT" && break
@@ -62,10 +72,13 @@ jobs:
               done
 
               if [ ! -f "$OUT" ]; then
-                echo "[skip] Did not produce $OUT (likely too few sites or transient fetch). Continuing."
+                echo "[skip] Did not produce $OUT (too few sites or transient fetch). Continuing."
               fi
             done
           done
+
+          echo "Files in site/:"
+          ls -lh site
 
       - name: Upload artifact for Pages
         uses: actions/upload-pages-artifact@v3
@@ -82,3 +95,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
