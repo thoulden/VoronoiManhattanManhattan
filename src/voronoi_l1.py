@@ -32,6 +32,14 @@ def nearest_labels(points_xy, sites_xy, metric: str, chunk=50000):
         labels[i:i+chunk] = d.argmin(axis=1)
     return labels
 
+def rotate_clockwise(xy: np.ndarray, deg: float) -> np.ndarray:
+    """Rotate points xy by +deg degrees clockwise."""
+    t = np.deg2rad(deg)
+    c, s = np.cos(t), np.sin(t)
+    R = np.array([[c, s], [-s, c]])
+    return xy @ R.T
+
+
 def main():
     ap = argparse.ArgumentParser(description="Generate Voronoi poster (L1 or L2) as SVG")
     ap.add_argument("--city", default="Manhattan, New York, USA")
@@ -45,16 +53,24 @@ def main():
     ap.add_argument("--bg", default="#f8f7f2")
     ap.add_argument("--stroke", default="#111111")
     ap.add_argument("--linewidth", type=float, default=0.6)
+    ap.add_argument("--l1-rotate-deg", type=float, default=0.0,
+                help="Rotate axes clockwise (degrees) before L1 distance; ~29 for Manhattan")
     args = ap.parse_args()
+    
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
 
-    print(f"[1/5] Geocoding boundary for: {args.city}")
+    print(f"[1/6] Geocoding boundary for: {args.city}")
+    try:
+    admin = ox.features_from_place(args.city, {"boundary": "administrative"}).to_crs(3857)
+    admin_geom = admin.geometry.unary_union
+    city_poly = admin_geom if admin_geom.geom_type != "MultiPolygon" else max(admin_geom.geoms, key=lambda g: g.area)
+    except Exception:
     boundary = ox.geocode_to_gdf(args.city)[["geometry"]].to_crs(3857)
     city_poly = boundary.iloc[0].geometry
 
     kv = parse_kv(args.query)
-    print(f"[2/5] Fetching OSM features with {kv} …")
+    print(f"[2/6] Fetching OSM features with {kv} …")
     # Overpass expects WGS84 polygon, but we will reproject the *results* immediately.
     city_poly_wgs84 = gpd.GeoSeries([city_poly], crs=3857).to_crs(4326).iloc[0]
     try:
@@ -81,14 +97,24 @@ def main():
 
     print(f"Using {len(pts)} sites.")
 
-    print(f"[3/5] Building grid at ~{args.grid_res} m …")
+    print(f"[3/6] Building grid at ~{args.grid_res} m …")
     minx, miny, maxx, maxy = city_poly.bounds
     xs = np.arange(minx, maxx, args.grid_res)
     ys = np.arange(miny, maxy, args.grid_res)
     X, Y = np.meshgrid(xs, ys)
     grid_pts = np.c_[X.ravel(), Y.ravel()]
 
-    print(f"[4/5] Assigning nearest site ({args.metric.upper()})…")
+    print(f"[4/6] Assigning nearest site ({args.metric.upper()})…")
+    S = np.c_[pts.geometry.x.values, pts.geometry.y.values]
+    P = grid_pts.copy()
+
+    if args.metric == "l1" and abs(args.l1_rotate_deg) > 1e-6:
+    P = rotate_clockwise(P, args.l1_rotate_deg)
+    S = rotate_clockwise(S, args.l1_rotate_deg)
+
+    labels = nearest_labels(P, S, args.metric)
+    
+    print(f"[5/6] Assigning nearest site ({args.metric.upper()})…")
     S = np.c_[pts.geometry.x.values, pts.geometry.y.values]
     labels = nearest_labels(grid_pts, S, args.metric)
     label_grid = labels.reshape(Y.shape)
@@ -97,7 +123,7 @@ def main():
     inside = centers.within(city_poly).values.reshape(Y.shape)
     label_grid = np.where(inside, label_grid, -1)
 
-    print("[5/5] Extracting vector contours…")
+    print("[6/6] Extracting vector contours…")
     edges = np.zeros_like(label_grid, dtype=np.uint8)
     edges[:-1, :] |= (label_grid[:-1, :] != label_grid[1:, :]).astype(np.uint8)
     edges[:, :-1] |= (label_grid[:, :-1] != label_grid[:, 1:]).astype(np.uint8)
