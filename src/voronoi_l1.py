@@ -67,19 +67,30 @@ def main():
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
 
-    # 1) Boundary (fast, compact place polygon)
+    # 1) Boundary (tight bounds from geocode; crisp outline from admin relation)
     print(f"[1/5] Getting boundary for: {args.city}")
+
+    # A) tight place polygon to define the working bbox (always in 3857)
+    place_gdf = ox.geocode_to_gdf(args.city)[["geometry"]].to_crs(3857)
+    place_poly = place_gdf.iloc[0].geometry
+
+    # B) try to get a high-detail admin outline; restrict to the place polygon
     try:
         admin = ox.features_from_place(
-            args.city,
-            {"boundary": "administrative", "admin_level": ["6", "7", "8"]}
+            args.city, {"boundary": "administrative"}
         ).to_crs(3857)
 
-        geom = admin.geometry.unary_union
-        city_poly = geom if geom.geom_type != "MultiPolygon" else max(geom.geoms, key=lambda g: g.area)
+        # keep only admin geoms that intersect the place polygon
+        admin = admin[admin.geometry.intersects(place_poly)]
+        if len(admin):
+            # choose the one with the largest overlap with the place polygon
+            overlap_area = admin.geometry.intersection(place_poly).area
+            city_poly = admin.loc[overlap_area.idxmax(), "geometry"]
+        else:
+            city_poly = place_poly
     except Exception:
-        boundary = ox.geocode_to_gdf(args.city)[["geometry"]].to_crs(3857)
-        city_poly = boundary.iloc[0].geometry
+        # fallback: just use the place polygon
+        city_poly = place_poly
 
     # 2) Sites from OSM — query by place (avoids huge geometry subdivision)
     kv = parse_kv(args.query)
@@ -110,7 +121,7 @@ def main():
 
     # 3) Grid
     print(f"[3/5] Building grid at ~{args.grid_res} m …")
-    minx, miny, maxx, maxy = city_poly.bounds
+    minx, miny, maxx, maxy = place_poly.bounds   # ← use place_poly here
     xs = np.arange(minx, maxx, args.grid_res)
     ys = np.arange(miny, maxy, args.grid_res)
     X, Y = np.meshgrid(xs, ys)
@@ -127,8 +138,8 @@ def main():
     label_grid = labels.reshape(Y.shape)
 
     # Mask outside boundary
-    centers = gpd.GeoSeries(gpd.points_from_xy(grid_pts[:, 0], grid_pts[:, 1]), crs=3857)
-    inside = centers.within(city_poly).values.reshape(Y.shape)
+    centers = gpd.GeoSeries(gpd.points_from_xy(grid_pts[:,0], grid_pts[:,1]), crs=3857)
+    inside = centers.within(city_poly).values.reshape(Y.shape)   # mask with city_poly    
     label_grid = np.where(inside, label_grid, -1)
 
     # 5) Extract boundaries and plot
