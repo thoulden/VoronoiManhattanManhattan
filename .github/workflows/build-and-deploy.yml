@@ -10,6 +10,11 @@ permissions:
   pages: write
   id-token: write
 
+# Prevent older runs from cancelling the newest one mid-build
+concurrency:
+  group: voronoi-pages-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -32,10 +37,14 @@ jobs:
 
       - name: Build all posters
         shell: bash
+        env:
+          OSMNX_LOG_CONSOLE: "True"
         run: |
-          # try all combos even if one is slow
+          set -x
           source .venv/bin/activate
           mkdir -p site
+
+          # keep website shell if present
           [ -f site/index.html ] && cp site/index.html site/index.html || true
 
           QUERIES=("railway=station" "amenity=cafe" "tourism=museum" "amenity=library" "shop=bakery")
@@ -50,16 +59,17 @@ jobs:
               echo "=== Building $OUT (query='$q' metric=$metric) ==="
 
               ROT=""
-              if [ "$metric" = "l1" ]; then ROT="--l1-rotate-deg $L1_ROTATE"; fi
+              [ "$metric" = "l1" ] && ROT="--l1-rotate-deg $L1_ROTATE"
 
+              # Retry each combo, hard timeout per attempt to avoid hangs
               n=0
               until [ $n -ge 3 ]; do
-                python src/voronoi_l1.py \
+                timeout 240s python -u src/voronoi_l1.py \
                   --city "$CITY" \
                   --query "$q" \
                   --metric "$metric" \
                   $ROT \
-                  --grid-res 20 \
+                  --grid-res 5 \
                   --figsize "24x36" \
                   --out "$OUT" && break
                 n=$((n+1))
