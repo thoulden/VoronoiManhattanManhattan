@@ -7,6 +7,7 @@ from shapely.geometry import Polygon, MultiPolygon
 from shapely.ops import unary_union
 from skimage import measure
 import matplotlib.pyplot as plt
+from scipy.spatial import cKDTree  
 
 # Keep Overpass polite but avoid hanging forever
 ox.settings.overpass_rate_limit = True
@@ -31,16 +32,19 @@ def polygons_list(geom):
     u = unary_union(geom)
     return list(u.geoms) if isinstance(u, MultiPolygon) else [u]
 
-def nearest_labels(points_xy, sites_xy, metric: str, chunk=50000):
-    labels = np.empty(points_xy.shape[0], dtype=np.int32)
-    for i in range(0, points_xy.shape[0], chunk):
-        P = points_xy[i:i+chunk][:, None, :]
-        S = sites_xy[None, :, :]
-        D = P - S
-        d = (np.abs(D).sum(axis=2) if metric == "l1"
-             else np.sqrt((D**2).sum(axis=2)))
-        labels[i:i+chunk] = d.argmin(axis=1)
-    return labels
+def nearest_labels(points_xy, sites_xy, metric: str) -> np.ndarray:
+    """Assign nearest site index for each point using cKDTree.
+    metric: 'l1' (Manhattan) or 'l2' (Euclidean)
+    """
+    p = 1 if metric == "l1" else 2
+    tree = cKDTree(sites_xy)
+    try:
+        # SciPy >=1.6 supports workers=-1 for parallelism
+        _, idx = tree.query(points_xy, k=1, p=p, workers=-1)
+    except TypeError:
+        # fallback for older SciPy
+        _, idx = tree.query(points_xy, k=1, p=p)
+    return idx.astype(np.int32)
 
 def rotate_clockwise(xy: np.ndarray, deg: float) -> np.ndarray:
     t = np.deg2rad(deg)
