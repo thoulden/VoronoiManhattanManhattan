@@ -53,7 +53,7 @@ def main():
     ap.add_argument("--city", default="New York County, New York, USA")
     ap.add_argument("--query", default="railway=station")
     ap.add_argument("--metric", choices=["l1", "l2"], default="l1")
-    ap.add_argument("--grid-res", type=float, default=20.0)
+    ap.add_argument("--grid-res", type=float, default=5.0)
     ap.add_argument("--figsize", type=parse_figsize, default=(24.0, 36.0))
     ap.add_argument("--max_sites", type=int, default=1500)
     ap.add_argument("--out", default="out/poster.svg")
@@ -69,8 +69,17 @@ def main():
 
     # 1) Boundary (fast, compact place polygon)
     print(f"[1/5] Getting boundary for: {args.city}")
-    boundary = ox.geocode_to_gdf(args.city)[["geometry"]].to_crs(3857)
-    city_poly = boundary.iloc[0].geometry
+    try:
+        admin = ox.features_from_place(
+            args.city,
+            {"boundary": "administrative", "admin_level": ["6", "7", "8"]}
+        ).to_crs(3857)
+
+        geom = admin.geometry.unary_union
+        city_poly = geom if geom.geom_type != "MultiPolygon" else max(geom.geoms, key=lambda g: g.area)
+    except Exception:
+        boundary = ox.geocode_to_gdf(args.city)[["geometry"]].to_crs(3857)
+        city_poly = boundary.iloc[0].geometry
 
     # 2) Sites from OSM — query by place (avoids huge geometry subdivision)
     kv = parse_kv(args.query)
