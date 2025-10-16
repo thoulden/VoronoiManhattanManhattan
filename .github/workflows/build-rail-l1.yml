@@ -1,0 +1,67 @@
+name: build-rail-l1
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: voronoi-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python deps
+        shell: bash
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build Manhattan L1 (railway=station)
+        shell: bash
+        run: |
+          set -x
+          source .venv/bin/activate
+          mkdir -p site
+          [ -f site/index.html ] && cp site/index.html site/index.html || true
+
+          OUT="site/manhattan_l1_railway_station.svg"
+          timeout 900s python -u src/voronoi_l1.py \
+            --city "New York County, New York, USA" \
+            --query "railway=station" \
+            --metric l1 \
+            --l1-rotate-deg 29 \
+            --grid-res 8 \
+            --figsize "24x36" \
+            --out "$OUT"
+
+          ls -lh site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
