@@ -2,224 +2,272 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Manhattan Voronoi (L1 / L2)</title>
 <style>
-  :root { --bg:#f8f7f2; --fg:#111; --muted:#777; }
-  body { margin:0; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--fg); }
-  header { padding:14px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; border-bottom:1px solid #ddd; }
-  header h1 { font-size:16px; margin:0 12px 0 0; font-weight:600; }
-  label { font-size:13px; color:var(--muted); margin-right:6px; }
-  select, input[type="range"], button { font:inherit; }
-  #wrap { display:flex; justify-content:center; padding:14px; }
-  canvas { background:var(--bg); border:1px solid #ccc; border-radius:10px; box-shadow:0 2px 18px rgba(0,0,0,.07); }
-  footer { padding:10px 16px; color:var(--muted); font-size:12px; }
+  :root { --bg:#f8f7f2; --fg:#111; --accent:#0b6; }
+  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--fg); }
+  header { padding: 10px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  header > * { font-size: 14px; }
+  label { display: inline-flex; align-items: center; gap: 6px; }
+  button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 8px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  #container { position: relative; }
+  canvas { display:block; width: min(100vw, 1100px); height: auto; margin: 0 auto 16px auto; background: var(--bg); }
+  #status { text-align:center; padding: 6px 0 12px; font-size: 13px; color:#666; }
 </style>
 </head>
 <body>
-<header>
-  <h1>Manhattan Voronoi</h1>
+  <header>
+    <strong>Manhattan Voronoi</strong>
+    <label>Metric:
+      <select id="metric">
+        <option value="l1" selected>Manhattan (L1)</option>
+        <option value="l2">Euclidean (L2)</option>
+      </select>
+    </label>
+    <label id="angleWrap">L1 angle:
+      <input id="angle" type="range" min="-45" max="45" step="1" value="29" />
+      <span id="angleVal">29°</span>
+    </label>
+    <label>Resolution (px):
+      <select id="res">
+        <!-- This controls how densely we sample pixels when coloring (1 = every pixel, 2 = every 2nd pixel, etc.) -->
+        <option value="2" selected>Fast (2)</option>
+        <option value="1">Fine (1)</option>
+        <option value="3">Faster (3)</option>
+        <option value="4">Fastest (4)</option>
+      </select>
+    </label>
+    <button id="redraw">Redraw</button>
+  </header>
 
-  <div>
-    <label>Dataset</label>
-    <select id="dataset">
-      <option value="rail">Railway stations (demo)</option>
-    </select>
+  <div id="container">
+    <canvas id="c" width="1100" height="2200"></canvas>
   </div>
-
-  <div>
-    <label>Metric</label>
-    <select id="metric">
-      <option value="l1" selected>Manhattan (L1)</option>
-      <option value="l2">Euclidean (L2)</option>
-    </select>
-  </div>
-
-  <div>
-    <label>Resolution</label>
-    <input id="res" type="range" min="2" max="12" step="1" value="6" />
-    <span id="resLabel"></span>
-  </div>
-
-  <button id="renderBtn">Render</button>
-</header>
-
-<div id="wrap">
-  <canvas id="c" width="900" height="1400"></canvas>
-</div>
-
-<footer>
-  Uses boundary clip for the shoreline, and per-pixel nearest site with your chosen metric.
-</footer>
+  <div id="status">Loading…</div>
 
 <script type="module">
-/* -----------------------------------------------------------
-   Minimal client-side Voronoi renderer with clipping
-   ----------------------------------------------------------- */
-import * as d3 from "https://cdn.skypack.dev/d3@7";
+async function main() {
+  const status = document.getElementById('status');
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { willReadFrequently: false });
 
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
-const W = canvas.width, H = canvas.height;
+  // UI
+  const metricEl = document.getElementById('metric');
+  const angleWrap = document.getElementById('angleWrap');
+  const angleEl = document.getElementById('angle');
+  const angleVal = document.getElementById('angleVal');
+  const resEl = document.getElementById('res');
+  const redrawBtn = document.getElementById('redraw');
 
-const metricSel = document.getElementById("metric");
-const resInput  = document.getElementById("res");
-const resLabel  = document.getElementById("resLabel");
-const renderBtn = document.getElementById("renderBtn");
+  // Load data (relative paths)
+  const [boundary, stations] = await Promise.all([
+    fetch('data/manhattan_boundary.geojson').then(r => r.json()),
+    fetch('data/manhattan_stations.geojson').then(r => r.json())
+  ]);
 
-resLabel.textContent = resInput.value + " (higher = faster)";
+  // Basic helpers
+  const fcToPolysLonLat = (fc) => {
+    // expects a single Polygon or MultiPolygon
+    const polys = [];
+    for (const feat of fc.features) {
+      const g = feat.geometry;
+      if (g.type === 'Polygon') polys.push(g.coordinates[0]); // outer ring only
+      if (g.type === 'MultiPolygon') for (const poly of g.coordinates) polys.push(poly[0]);
+    }
+    return polys; // array of rings: [[ [lon,lat], ... ], ...]
+  };
 
-/** Manhattan and Euclidean metrics in SCREEN space */
-const manhattan = (ax, ay, bx, by) => Math.abs(ax-bx) + Math.abs(ay-by);
-const euclid2   = (ax, ay, bx, by) => { const dx=ax-bx, dy=ay-by; return dx*dx + dy*dy; };
+  const fcToPointsLonLat = (fc) => {
+    const pts = [];
+    for (const feat of fc.features) {
+      if (feat.geometry?.type === 'Point') {
+        const [lon,lat] = feat.geometry.coordinates;
+        pts.push([lon,lat]);
+      }
+    }
+    return pts;
+  };
 
-/** Load boundary + sites (fallbacks included) */
-async function loadData() {
-  let boundary, sites;
-  try {
-    boundary = await (await fetch("data/manhattan_boundary.geojson")).json();
-  } catch {
-    // very coarse fallback rectangle so the demo still runs
-    boundary = {
-      type:"FeatureCollection",
-      features:[{ type:"Feature", geometry:{ type:"Polygon",
-        coordinates:[ [[-74.03,40.69],[-73.92,40.69],[-73.92,40.88],[-74.03,40.88],[-74.03,40.69]] ]
-      }}]
-    };
+  // Minimal mercator projection that we fit to canvas
+  function mercatorProject(lon, lat) {
+    const λ = lon * Math.PI/180;
+    const φ = Math.max(Math.min(lat* Math.PI/180, Math.PI/2 - 1e-6), -Math.PI/2 + 1e-6);
+    const x = λ;
+    const y = Math.log(Math.tan(Math.PI/4 + φ/2));
+    return [x, y];
   }
-  try {
-    sites = await (await fetch("data/railway_station_points.json")).json();
-  } catch {
-    // fallback: 80 scattered points in roughly Manhattan bbox
-    const rnd = d3.randomUniform.source(Math.random)(0,1);
-    const pts = d3.range(80).map(() => ([
-      -74.02 + rnd()*0.09, // lon
-       40.70 + rnd()*0.17  // lat
-    ]));
-    sites = pts.map(([lon,lat]) => ({ lon, lat, name:"demo" }));
+
+  // Fit projection to boundary
+  const rings = fcToPolysLonLat(boundary);
+  const projected = rings.map(r => r.map(([lon,lat]) => mercatorProject(lon,lat)));
+
+  // Compute bounds in projected space
+  let minX=+Infinity, minY=+Infinity, maxX=-Infinity, maxY=-Infinity;
+  for (const ring of projected) {
+    for (const [x,y] of ring) {
+      if (x<minX) minX=x; if (x>maxX) maxX=x;
+      if (y<minY) minY=y; if (y>maxY) maxY=y;
+    }
   }
-  return { boundary, sites };
-}
+  const pad = 0.04; // add a bit of margin
+  minX -= pad; maxX += pad; minY -= pad; maxY += pad;
 
-/** Build a mercator projection that fits the canvas nicely */
-function fitProjection(boundaryGeo) {
-  const projection = d3.geoMercator();
-  const path = d3.geoPath(projection, ctx);
-  projection.fitExtent([[20, 20],[W-20, H-20]], boundaryGeo);
-  return { projection, path };
-}
+  // Build transform: projected -> canvas
+  function toCanvas([x,y]) {
+    const W = canvas.width, H = canvas.height;
+    const sx = W / (maxX - minX);
+    const sy = H / (maxY - minY);
+    const s = Math.min(sx, sy);     // preserve aspect
+    const ox = (W - s*(maxX-minX))/2;
+    const oy = (H - s*(maxY-minY))/2;
+    const cx = ox + s * (x - minX);
+    const cy = oy + s * (maxY - y); // flip Y (mercator y grows upward)
+    return [cx, cy];
+  }
 
-/** Create a Path2D clip from boundary (multi-polys ok) */
-function boundaryPath2D(boundaryGeo, projection) {
-  const p = new Path2D();
-  const path2 = d3.geoPath(projection, new class {
-    moveTo(x,y){ p.moveTo(x,y); } lineTo(x,y){ p.lineTo(x,y); }
-    closePath(){ p.closePath(); } beginPath(){} arc(){} // minimal sink
+  // Prepare canvas clip path from boundary (for fast masking)
+  function setClip() {
+    ctx.save();
+    ctx.beginPath();
+    for (const ring of projected) {
+      const [x0,y0] = toCanvas(ring[0]);
+      ctx.moveTo(x0,y0);
+      for (let i=1;i<ring.length;i++) {
+        const [xi,yi] = toCanvas(ring[i]);
+        ctx.lineTo(xi,yi);
+      }
+      ctx.closePath();
+    }
+    ctx.clip('nonzero');
+  }
+
+  // Project station points to canvas pixels
+  const stationLonLat = fcToPointsLonLat(stations);
+  const stationXY = stationLonLat.map(([lon,lat]) => toCanvas(mercatorProject(lon,lat)));
+
+  // Simple color palette (repeat)
+  const palette = Array.from({length: 20}, (_,i) => `hsl(${(i*360/20)|0} 70% 45%)`);
+
+  // Distance functions (in canvas pixel space)
+  const rotate = (x,y,deg) => {
+    const t = deg * Math.PI/180;
+    const c = Math.cos(t), s = Math.sin(t);
+    return [ c*x + s*y, -s*x + c*y ];
+  };
+
+  function nearestIndexL1(x,y,deg=0) {
+    if (deg !== 0) [x,y] = rotate(x,y,deg);
+    let bestIdx = 0, best = Infinity;
+    for (let i=0;i<stationXY.length;i++) {
+      let [sx,sy] = stationXY[i];
+      if (deg !== 0) [sx,sy] = rotate(sx,sy,deg);
+      const d = Math.abs(x - sx) + Math.abs(y - sy);
+      if (d < best) { best = d; bestIdx = i; }
+    }
+    return bestIdx;
+  }
+
+  function nearestIndexL2(x,y) {
+    let bestIdx = 0, best = Infinity;
+    for (let i=0;i<stationXY.length;i++) {
+      const [sx,sy] = stationXY[i];
+      const dx = x - sx, dy = y - sy;
+      const d = dx*dx + dy*dy;
+      if (d < best) { best = d; bestIdx = i; }
+    }
+    return bestIdx;
+  }
+
+  // Progressive raster paint (column stripes) with clipping for speed
+  async function render() {
+    const metric = metricEl.value; 
+    const res = parseInt(resEl.value, 10); // step size in pixels
+    const angle = parseFloat(angleEl.value);
+    angleVal.textContent = `${angle|0}°`;
+    status.textContent = `Rendering (${metric.toUpperCase()} @ step=${res})…`;
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // Clip to Manhattan outline so we only see inside the island
+    setClip();
+
+    const W = canvas.width, H = canvas.height;
+    // Paint in vertical bands to keep UI responsive
+    let x = 0;
+    const band = 8*res; // number of columns per frame
+    function step() {
+      const xEnd = Math.min(W, x + band);
+      for (let xi = x; xi < xEnd; xi += res) {
+        for (let yi = 0; yi < H; yi += res) {
+          const idx = (metric === 'l1')
+            ? nearestIndexL1(xi + 0.5*res, yi + 0.5*res, angle)
+            : nearestIndexL2(xi + 0.5*res, yi + 0.5*res);
+          ctx.fillStyle = palette[idx % palette.length];
+          ctx.fillRect(xi, yi, res, res);
+        }
+      }
+      x = xEnd;
+      if (x < W) {
+        requestAnimationFrame(step);
+      } else {
+        // draw stations and outline on top
+        ctx.restore(); // remove clip to stroke outline cleanly
+        drawOutline();
+        drawStations();
+        status.textContent = `Done. ${stationXY.length} stations.`;
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  function drawOutline() {
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#111';
+    ctx.beginPath();
+    for (const ring of projected) {
+      const [x0,y0] = toCanvas(ring[0]);
+      ctx.moveTo(x0,y0);
+      for (let i=1;i<ring.length;i++) {
+        const [xi,yi] = toCanvas(ring[i]);
+        ctx.lineTo(xi,yi);
+      }
+      ctx.closePath();
+    }
+    ctx.stroke();
+  }
+
+  function drawStations() {
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#fff';
+    ctx.fillStyle = '#111';
+    for (const [x,y] of stationXY) {
+      ctx.beginPath();
+      ctx.arc(x, y, 2, 0, Math.PI*2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  // UI wiring
+  metricEl.addEventListener('change', () => {
+    angleWrap.style.display = (metricEl.value === 'l1') ? 'inline-flex' : 'none';
   });
-  path2(boundaryGeo);
-  return p;
+  angleEl.addEventListener('input', () => {
+    angleVal.textContent = `${angleEl.value}°`;
+  });
+  redrawBtn.addEventListener('click', render);
+
+  // Initial render
+  metricEl.dispatchEvent(new Event('change'));
+  await render();
 }
 
-/** Render Voronoi by per-pixel nearest site (block scan), then clip to boundary */
-function renderVoronoi({ sitesXY, metric, step, clipPath }) {
-  // Draw background
-  ctx.save();
-  ctx.clearRect(0,0,W,H);
-  ctx.fillStyle = "#f8f7f2";
-  ctx.fillRect(0,0,W,H);
-
-  // Clip to the boundary so shoreline is crisp
-  ctx.clip(clipPath);
-
-  // Color palette (repeat)
-  const palette = d3.schemeTableau10.concat(d3.schemeSet3, d3.schemePaired);
-
-  // Prepare an ImageData we’ll paint into by blocks
-  const img = ctx.getImageData(0,0,W,H);
-  const data = img.data;
-
-  const cols = Math.ceil(W / step);
-  const rows = Math.ceil(H / step);
-
-  // Process by small tiles to keep UI responsive
-  const blockRows = 80;
-  let r0 = 0;
-
-  function processChunk() {
-    const r1 = Math.min(r0 + blockRows, rows);
-    for (let ry = r0; ry < r1; ry++) {
-      const yCenter = Math.min(H-1, Math.floor(ry*step + step/2));
-      for (let rx = 0; rx < cols; rx++) {
-        const xCenter = Math.min(W-1, Math.floor(rx*step + step/2));
-
-        // Find nearest site under chosen metric
-        let best = Infinity, bestIdx = -1;
-        const sx = xCenter, sy = yCenter;
-        for (let i=0; i<sitesXY.length; i++) {
-          const s = sitesXY[i];
-          const d = (metric==="l1") ? manhattan(sx,sy,s[0],s[1]) : euclid2(sx,sy,s[0],s[1]);
-          if (d < best) { best = d; bestIdx = i; }
-        }
-        const [r,g,b] = d3.color(palette[bestIdx % palette.length]).rgb().array();
-
-        // Paint the tile (rx,ry)
-        const x0 = rx*step|0, y0 = ry*step|0;
-        const w  = Math.min(step, W - x0)|0;
-        const h  = Math.min(step, H - y0)|0;
-
-        for (let ty=0; ty<h; ty++) {
-          let idx = ((y0 + ty)*W + x0) * 4;
-          for (let tx=0; tx<w; tx++) {
-            data[idx++] = r; data[idx++] = g; data[idx++] = b; data[idx++] = 255;
-          }
-        }
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-
-    r0 = r1;
-    if (r0 < rows) {
-      requestAnimationFrame(processChunk);
-    } else {
-      // draw site marks on top
-      ctx.restore(); // remove clip to draw dots intact
-      ctx.save();
-      ctx.fillStyle = "#111";
-      for (const s of sitesXY) {
-        ctx.beginPath();
-        ctx.arc(s[0], s[1], 1.8, 0, Math.PI*2);
-        ctx.fill();
-      }
-      ctx.restore();
-      console.log("finished");
-    }
-  }
-  processChunk();
-}
-
-/** main */
-(async function main() {
-  const { boundary, sites } = await loadData();
-
-  const { projection } = fitProjection(boundary);
-  const clipPath = boundaryPath2D(boundary, projection);
-
-  // Project sites to screen coords
-  const sitesXY = sites.map(({lon,lat}) => projection([lon,lat])).filter(Boolean);
-
-  function run() {
-    const metric = metricSel.value; // l1 or l2
-    const slider = +resInput.value; // 2..12
-    // map slider to pixel step: bigger slider → bigger step → faster
-    const step = Math.round(d3.scaleLinear().domain([2,12]).range([3,20])(slider));
-    resLabel.textContent = slider + " (tile " + step + "px)";
-    renderVoronoi({ sitesXY, metric, step, clipPath });
-  }
-
-  renderBtn.addEventListener("click", run);
-  resInput.addEventListener("input", () => { resLabel.textContent = resInput.value; });
-  run();
-})();
+main().catch(err => {
+  document.getElementById('status').textContent = 'Error: ' + err;
+  console.error(err);
+});
 </script>
 </body>
 </html>
