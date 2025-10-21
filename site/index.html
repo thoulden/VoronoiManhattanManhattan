@@ -99,8 +99,8 @@ async function main() {
 
   // Load data (relative paths)
   const [boundary, stations] = await Promise.all([
-    fetch('data/manhattan_boundary.geojson').then(r => r.json()),
-    fetch('data/manhattan_stations.geojson').then(r => r.json())
+    fetch('https://raw.githubusercontent.com/thoulden/VoronoiManhattanManhattan/main/site/data/manhattan_boundary.geojson'),
+    fetch('https://raw.githubusercontent.com/thoulden/VoronoiManhattanManhattan/main/site/data/manhattan_stations.geojson')
   ]);
 
   // Basic helpers
