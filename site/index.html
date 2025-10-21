@@ -5,16 +5,52 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Manhattan Voronoi (L1 / L2)</title>
 <style>
-  :root { --bg:#f8f7f2; --fg:#111; --accent:#0b6; }
-  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--fg); }
-  header { padding: 10px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-  header > * { font-size: 14px; }
-  label { display: inline-flex; align-items: center; gap: 6px; }
-  button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 8px; cursor: pointer; }
-  button:hover { border-color: var(--accent); }
-  #container { position: relative; }
-  canvas { display:block; width: min(100vw, 1100px); height: auto; margin: 0 auto 16px auto; background: var(--bg); }
-  #status { text-align:center; padding: 6px 0 12px; font-size: 13px; color:#666; }
+  :root {
+    --bg: #f8f7f2;
+    --fg: #111;
+    --accent: #0b6;
+  }
+
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  header {
+    padding: 60px 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    background: transparent; /* ✅ no white box */
+  }
+
+  header strong {
+    font-size: 140px; /* ✅ much larger text */
+    font-weight: 800;
+    line-height: 1;
+    background: none; /* ✅ ensure no background */
+  }
+
+  #container {
+    position: relative;
+  }
+
+  canvas {
+    display: block;
+    width: min(100vw, 1100px);
+    height: auto;
+    margin: 0 auto 16px auto;
+    background: var(--bg);
+  }
+
+  #status {
+    text-align: center;
+    padding: 6px 0 12px;
+    font-size: 13px;
+    color: #666;
+  }
 </style>
 </head>
 <body>
